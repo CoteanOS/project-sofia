@@ -1,40 +1,118 @@
-# llm.py — one call to rule them all
-import os
+# llm.py — one interface to Sofia's model backends
+
 from dotenv import load_dotenv
 from litellm import completion, embedding
 
 load_dotenv()
 
-# Change this one string to move Sofia's brain between backends.
-DEFAULT_MODEL = "ollama_chat/gpt-oss:20b"
+DEFAULT_MODEL = "ollama_chat/sofia-worker"
+
 
 def llm(messages, model=DEFAULT_MODEL, tools=None, temperature=0.7):
-    """Send messages to a model, return the assistant message object.
-    The returned object has .content (text) and .tool_calls (if any)."""
-    resp = completion(
-        model=model,
-        messages=messages,
-        tools=tools,
-        temperature=temperature,
-    )
-    return resp.choices[0].message
+    kwargs = {
+        "model": model,
+        "messages": messages,
+        "temperature": temperature,
+    }
+
+    if tools:
+        kwargs["tools"] = tools
+
+    response = completion(**kwargs)
+    return response.choices[0].message
+
+
+def llm_stream(messages, model=DEFAULT_MODEL, tools=None, temperature=0.7):
+    kwargs = {
+        "model": model,
+        "messages": messages,
+        "temperature": temperature,
+        "stream": True,
+    }
+
+    if tools:
+        kwargs["tools"] = tools
+
+    return completion(**kwargs)
+
 
 def embed(texts, model="ollama/nomic-embed-text"):
-    """Turn text into vectors for memory. Accepts a string or a list."""
     if isinstance(texts, str):
         texts = [texts]
-    resp = embedding(model=model, input=texts)
-    return [row["embedding"] for row in resp["data"]]
 
-if __name__ == "__main__":
-    backends = [
-        "ollama_chat/gpt-oss:20b",             # local
-        "gemini/gemini-2.5-flash",             # cloud (skipped without a key)
-        "openrouter/qwen/qwen3-coder",         # cloud (skipped without a key)
+    response = embedding(
+        model=model,
+        input=texts,
+    )
+
+    return [
+        row["embedding"]
+        for row in response["data"]
     ]
-    for m in backends:
-        try:
-            msg = llm([{"role": "user", "content": "Say hi in five words."}], model=m)
-            print(f"{m:40s} -> {msg.content}")
-        except Exception as e:
-            print(f"{m:40s} -> skipped ({e})")
+
+
+# ---------------------------------------------------------------------------
+# Native Ollama fast-chat path
+# ---------------------------------------------------------------------------
+
+import json as _json
+import urllib.request as _urllib_request
+
+
+OLLAMA_CHAT_URL = "http://127.0.0.1:11434/api/chat"
+FAST_CHAT_MODEL = "sofia-worker"
+
+
+def ollama_fast_chat(messages, think="low"):
+    payload = _json.dumps({
+        "model": FAST_CHAT_MODEL,
+        "messages": messages,
+        "stream": False,
+        "think": think,
+        "keep_alive": -1,
+    }).encode()
+
+    request = _urllib_request.Request(
+        OLLAMA_CHAT_URL,
+        data=payload,
+        headers={"Content-Type": "application/json"},
+    )
+
+    with _urllib_request.urlopen(request) as response:
+        result = _json.loads(response.read())
+
+    return result.get("message", {}).get("content", "")
+
+
+def ollama_fast_stream(messages, think="low"):
+    payload = _json.dumps({
+        "model": FAST_CHAT_MODEL,
+        "messages": messages,
+        "stream": True,
+        "think": think,
+        "keep_alive": -1,
+    }).encode()
+
+    request = _urllib_request.Request(
+        OLLAMA_CHAT_URL,
+        data=payload,
+        headers={"Content-Type": "application/json"},
+    )
+
+    with _urllib_request.urlopen(request) as response:
+        for raw in response:
+            obj = _json.loads(raw)
+
+            content = obj.get(
+                "message",
+                {},
+            ).get(
+                "content",
+                "",
+            )
+
+            if content:
+                yield content
+
+            if obj.get("done"):
+                return

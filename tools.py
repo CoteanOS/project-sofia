@@ -1,8 +1,10 @@
 # tools.py — local hand-written tools (file ops now handled by the MCP fs server)
-import datetime
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 def get_current_time():
-    return datetime.datetime.now().isoformat(timespec="seconds")
+    now = datetime.now(ZoneInfo("Europe/Amsterdam"))
+    return now.strftime("%A, %Y-%m-%d %H:%M:%S %Z")
 
 TOOLS = {
     "get_current_time": get_current_time,

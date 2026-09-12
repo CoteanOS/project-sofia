@@ -1,120 +1,201 @@
 # Sofia
 
-A local, agentic AI assistant that runs on your own machine. Sofia chats through a
-local language model, remembers things across restarts, and can act on the real
-world (read and write files, fetch web pages) through pluggable tools. No cloud
-account required; cloud models are optional and swappable.
+A local, agentic AI assistant that runs on your own machine. Sofia routes each
+request to a specialist, acts on the real world through tools (files, web),
+remembers across restarts, checks every action against safety guardrails, and can
+be summoned by voice. She runs fully local; cloud models are optional and swappable
+through one interface. No third-party AI accounts, no telemetry.
 
-Built in phases, each one leaving a working system. Four of six phases are done.
+Three ways to reach her: a `sofia "..."` command, an OpenAI-compatible server that
+plugs into Open WebUI, and a wake-word voice loop.
 
 ---
 
-## What it is (the mental model)
+## Mental model
 
-A language model is a text-in, text-out box. It has no memory and no hands: it
-can't remember past conversations, run code, or touch files. Everything here is
+A language model is a text-in, text-out box with no memory and no hands: it can't
+remember past conversations, run code, or touch files. Everything here is
 scaffolding around those two limits.
 
-- **No hands** is solved with **tools**: the model emits text asking for a tool,
+- **No hands** is solved with **tools**: the model emits text asking for a tool;
   our code runs the real thing and feeds the result back.
 - **No memory** is solved two ways: the running conversation (short-term) and a
   notebook on disk that survives restarts (long-term).
-
-Every phase below is that idea, extended.
+- **One generalist model is mediocre at everything**, so a **router** sends each
+  request to a specialist briefed for that job.
+- **Acting on the world is risky**, so every tool call passes through **guardrails**.
 
 ---
 
 ## Architecture
 
 ```
-              you type a request
-                     │
-                     ▼
-   ┌─────────────────────────────────────────┐
-   │  agent.py  — the loop                    │
-   │  1. retrieve relevant memories           │
-   │  2. send chat + tool menu to the model   │
-   │  3. model replies: answer, or tool call  │
-   │  4. run the tool, feed result back       │
-   │  5. repeat until it answers              │
-   └─────────────────────────────────────────┘
-        │              │                 │
-        ▼              ▼                 ▼
-   llm.py         memory.py         mcp_tools.py
-   (the spine)    (the notebook)    (the tool socket)
-        │              │                 │
-        ▼              ▼                 ▼
-   Ollama /       ChromaDB +        MCP servers:
-   any model      nomic-embed       filesystem + fetch
+   CLI (sofia "...")        Open WebUI            voice loop (wake word)
+        |                       |                       |
+        |                       v                       |  wake word (openWakeWord)
+        |                 server.py  <------------------ |  -> record -> Whisper (STT)
+        |               (OpenAI API)   HTTP /v1          |  -> reply -> Piper (TTS)
+        +-----------+-----------+------------------------+
+                    v
+              graph.py - router
+     fast keyword pass first; falls back to the sofia-router model
+       |        |        |        |         |            |
+       v        v        v        v         v            v
+     time   assistant  coder  researcher  planner   research_coder
+                          |         |
+                          v         v
+                       run() / run_stream()   the worker loop
+                          |
+        +-----------------+------------------+
+        v                 v                  v
+     llm.py            memory.py         mcp_tools.py
+     (spine +          (Chroma +         (persistent MCP sessions:
+      fast chat)        nomic-embed)      filesystem + fetch)
+
+     every tool call first passes through guardrails.py
 ```
+
+The router decides *who* works. `run()` / `run_stream()` are the reusable engine
+for *how* a worker does the job, with tools, memory, and guardrails in force. The
+CLI, the server, and the voice loop are three front-ends onto the same graph.
+
+---
+
+## Models
+
+Custom Ollama models, built from Modelfiles in the repo:
+
+- **sofia-worker** (`Modelfile.worker`) - `qwen3:8b`, `num_ctx 8192`. The general
+  agent and specialists. Chosen for tool-calling support and a footprint (~6 GB)
+  that fits a 24 GB machine while leaving room for the voice stack. (Larger workers
+  were tried - gpt-oss:20b and qwen3:14b were too heavy on 24 GB; gemma3:12b does
+  not support tools.)
+- **sofia-router** (`Modelfile.router`) - `qwen3:4b-instruct`, `num_ctx 1024`,
+  `temperature 0`. Fast classification only.
+- **nomic-embed-text** - embeddings for long-term memory.
+- **faster-whisper** - speech-to-text for the voice loop.
+- **Piper `en_GB-jenny_dioco-medium`** - text-to-speech voice.
+
+Rebuild after editing a Modelfile: `ollama create sofia-worker -f Modelfile.worker`.
+
+Model choice is a one-line change (the `FROM` line in the Modelfile, or the model
+string in `llm.py`), so the worker can be swapped for a bigger local model or a
+cloud model without touching the rest of the code.
 
 ---
 
 ## The stack
 
-- **Ollama** — serves local models. Currently `gpt-oss:20b` (backbone) and
-  `nomic-embed-text` (embeddings).
-- **LiteLLM** — one interface to every model backend, local or cloud. Switching
-  models is a one-string change.
-- **ChromaDB** — the vector store behind long-term memory.
-- **MCP (Model Context Protocol)** — standard plug format for tools. Sofia uses
-  the filesystem and fetch servers.
-- **uv** — Python environment and package manager.
-- **Node** — required to run the filesystem MCP server (launched via `npx`).
+- **Ollama** - serves the local LLMs.
+- **LiteLLM** - one interface to any model backend; also a native Ollama fast-chat
+  path for low-latency replies.
+- **ChromaDB** + **nomic-embed-text** - long-term memory.
+- **MCP** - filesystem and fetch servers, providing Sofia's tools (persistent
+  sessions).
+- **LangGraph** - models the specialist team as a graph.
+- **FastAPI / uvicorn** - the OpenAI-compatible server.
+- **openWakeWord** + **faster-whisper** + **Piper** - the local voice loop (wake
+  word, speech-to-text, text-to-speech). Fully local, no accounts.
+- **uv** - Python environment. **Node** - runs the filesystem MCP server.
 
 ---
 
 ## Files
 
-| File            | What it is                                                            |
-|-----------------|-----------------------------------------------------------------------|
-| `llm.py`        | The spine. `llm()` talks to any model; `embed()` turns text into vectors. |
-| `tools.py`      | Hand-written local tools. Currently just `get_current_time`.           |
-| `mcp_tools.py`  | Bridge to MCP servers. Discovers their tools and runs them.            |
-| `memory.py`     | Long-term memory. `ingest()` stores text; `retrieve()` finds it by meaning. |
-| `agent.py`      | The loop that ties it all together.                                    |
-| `.env`          | API keys (blank for local-only). Never committed.                     |
-| `.gitignore`    | Keeps `.venv/`, `.env`, `memory_db/`, and caches out of git.          |
-| `memory_db/`    | Chroma's on-disk store. Created at runtime.                            |
+| File            | What it is                                                               |
+|-----------------|--------------------------------------------------------------------------|
+| `llm.py`        | The spine: `llm()` / `llm_stream()` for any model, a native Ollama fast-chat path, and `embed()`. |
+| `tools.py`      | Hand-written local tools (`get_current_time`, Amsterdam time zone).       |
+| `mcp_tools.py`  | Bridge to the MCP servers. Sessions are opened once and reused across calls. |
+| `memory.py`     | Long-term memory: `ingest()` stores text, `retrieve()` finds it by meaning. |
+| `guardrails.py` | The gate every tool call passes: path normalization + containment, secret wall, confirm-on-write, fetch check, audit log. |
+| `agent.py`      | The worker loop: `run()` and `run_stream()`, both taking a `system` persona and optional `model`. |
+| `graph.py`      | Orchestration: the router and the six specialist routes.                  |
+| `cli.py`        | The `sofia "..."` entry point.                                            |
+| `server.py`     | OpenAI-compatible API (`/v1/chat/completions`, streaming) for Open WebUI. |
+| `voice.py`      | Wake-word voice loop: openWakeWord -> Whisper -> server.py -> Piper.       |
+| `warm_models.sh`| Pre-loads the worker and router models.                                   |
+| `start_sofia.sh`| Warms models, then launches the server on `127.0.0.1:8000`.               |
+| `Modelfile.*`   | Definitions for the custom `sofia-worker` and `sofia-router` models.      |
+| `.env`          | API keys (blank for local-only). Never committed.                        |
+| `memory_db/`    | Chroma's on-disk store (runtime).                                         |
+| `sofia.audit.jsonl` | Log of every tool decision (runtime).                                |
+
+Wake-word models (`*.onnx`) and TTS voices are downloaded/trained separately and
+are not committed.
+
+---
+
+## The routes
+
+The router first tries a fast keyword pass and only calls the `sofia-router` model
+when that is inconclusive. It defaults to `coder` for local file work and reserves
+the research routes for genuine external-info needs.
+
+- **time** - date/time questions. Answered instantly from the local tool, no model call.
+- **assistant** - ordinary conversation. Streams straight from the worker, no tools.
+- **coder** - code, files, debugging. Runs the full tool loop.
+- **researcher** - needs current/external info. Runs the loop with fetch.
+- **research_coder** - both: research first, then hand the findings to the coder.
+- **planner** - architecture, strategy, decomposition. One-shot plan.
 
 ---
 
 ## Setup
 
-Prerequisites: [Ollama](https://ollama.com), [uv](https://docs.astral.sh/uv/),
-and Node.js installed.
+Prerequisites: [Ollama](https://ollama.com), [uv](https://docs.astral.sh/uv/), Node.js.
 
 ```bash
-# 1. Environment
-cd ~/code/sofia
+git clone <your-repo-url> sofia && cd sofia
 uv venv && source .venv/bin/activate
 uv pip install litellm langgraph chromadb python-dotenv fastapi uvicorn mcp
+uv pip install openwakeword sounddevice faster-whisper numpy requests onnxruntime piper-tts
 
-# 2. Models (Ollama must be running)
-ollama pull gpt-oss:20b
+# base models, then build the custom ones
+ollama pull qwen3:8b
+ollama pull qwen3:4b-instruct
 ollama pull nomic-embed-text
+ollama create sofia-worker -f Modelfile.worker
+ollama create sofia-router -f Modelfile.router
 ```
 
-The MCP servers (`@modelcontextprotocol/server-filesystem` and `mcp-server-fetch`)
-download themselves on first use through `npx` and `uvx`. No manual install.
+The MCP servers download themselves on first use via `npx` and `uvx`. The voice
+loop needs a wake-word `.onnx` in the project root and a Piper voice; both are
+fetched separately (see Voice below).
 
 ---
 
 ## Running it
 
-Ollama must be running in the background. Then, in an activated environment:
+Ollama must be running. Then any of the three interfaces:
+
+**CLI:**
 
 ```bash
-cd ~/code/sofia
-source .venv/bin/activate
-
-python agent.py "what time is it?"
-python agent.py "fetch https://example.com and tell me the main heading"
-python agent.py "list the files in ~/code/sofia and tell me which is biggest"
+sofia "write a fizzbuzz script and save it to ~/code/sofia/fizzbuzz.py"
 ```
 
-Every new terminal needs `source .venv/bin/activate` again; it only lasts for that
-window.
+**Server + Open WebUI:**
+
+```bash
+./start_sofia.sh          # warms models, serves 127.0.0.1:8000
+```
+
+Add it in Open WebUI as an OpenAI-compatible connection, base URL
+`http://127.0.0.1:8000/v1`, any non-empty key. "sofia" then appears in the model
+dropdown.
+
+**Voice:**
+
+```bash
+./start_sofia.sh          # terminal 1: the brain
+python voice.py           # terminal 2: the ears
+```
+
+Say the wake word, wait for the acknowledgement, and talk. She records until you
+stop, transcribes locally, answers through the server, and speaks the reply with
+Piper. `THRESHOLD` in `voice.py` tunes wake sensitivity; `SILENCE_RMS` tunes when a
+turn ends.
 
 ### Teaching it something (long-term memory)
 
@@ -122,67 +203,76 @@ window.
 python -c "from memory import ingest; ingest('Some fact worth remembering.', source='facts')"
 ```
 
-Ingested facts are retrieved automatically before Sofia answers, and they survive
-restarts because they live in `memory_db/` on disk.
+Facts are retrieved automatically before Sofia answers and survive restarts.
 
 ---
 
 ## How each piece works
 
 ### The spine (`llm.py`)
-One function, `llm(messages, model=...)`, sends a conversation to a model and
-returns its reply. The model is chosen by a string like `ollama_chat/gpt-oss:20b`
-(local) or `gemini/gemini-2.5-flash` (cloud). Changing that one string moves
-Sofia's brain between backends without touching anything else. `embed()` does the
-same job for the tiny embedding model that powers memory.
+`llm()` / `llm_stream()` send a conversation to a model chosen by a string like
+`ollama_chat/sofia-worker` (local) or `gemini/gemini-2.5-flash` (cloud); changing
+that string moves the brain between backends. A native Ollama fast-chat path is used
+for low-latency replies. `embed()` powers memory.
 
-### The loop (`agent.py`)
-The core of every agent. It sends the conversation plus a menu of available tools
-to the model. If the model replies with plain text, that's the answer. If it
-replies asking for a tool, the loop runs that tool, appends the result to the
-conversation, and goes around again. A `max_steps` cap prevents runaway loops.
+### The worker loop (`agent.py`)
+`run(task, system=..., model=...)` sends the conversation plus the tool menu to the
+model; text is the answer, a tool call gets run (through guardrails) and fed back,
+repeating until it answers. `run_stream()` is the streaming version. The `system`
+argument is the worker's persona; `model` lets a specialist use a different backend.
 
 ### Memory (`memory.py`)
-Text is converted into vectors (lists of numbers representing meaning) and stored
-in Chroma. To recall something, the query is turned into a vector too and the
-closest stored chunks come back. Before each answer, `agent.py` retrieves the most
-relevant memories and prepends them to the model's instructions. This is RAG:
-retrieve relevant context, then generate.
+Text becomes vectors stored in Chroma; a query is embedded too and the closest
+chunks come back. Relevant memories are prepended before Sofia answers. This is
+RAG: retrieve, then generate.
 
 ### Tools via MCP (`mcp_tools.py`)
-Rather than hand-writing every capability, Sofia connects to pre-built MCP servers,
-each exposing a bundle of tools. `load_mcp()` connects at startup and translates
-each server's tools into the same schema shape the local tools use. `agent.py`
-merges local and MCP tools into one menu, and when the model calls one, dispatches
-it to the right place. File operations are handled entirely by the filesystem
-server (scoped to `~/code`).
+Sofia connects to pre-built MCP servers, each exposing a bundle of tools. The
+servers are started once on a background event loop and the sessions are reused for
+every tool call. File operations run through the filesystem server, scoped to
+`~/code`.
+
+### Guardrails (`guardrails.py`)
+Every tool call passes `check()`:
+- **Path normalization + containment** - `~` is expanded, relative paths are
+  rejected, and any path resolving outside `~/code` is blocked.
+- **Secret wall** - `.env`, `.pem`, `.key`, SSH keys, `.git/config` are blocked outright.
+- **Confirm on write** - write/edit/move/mkdir prompt for `y/N` before running.
+- **Exit-door check** - a fetch URL over 500 chars is blocked as a possible leak.
+- **Audit log** - every decision is written to `sofia.audit.jsonl`.
+
+Blocked calls return a `blocked: reason` note to the model instead of crashing.
+
+### Orchestration (`graph.py`)
+A fast keyword pass handles the obvious cases; otherwise the `sofia-router` model
+classifies the request in one word, with exact matching and a `coder` fallback. The
+chosen specialist runs, and for `research_coder` the researcher's findings are handed
+to the coder. LangGraph walks the graph with a shared state.
+
+### Voice (`voice.py`)
+A standalone loop: openWakeWord listens on the mic, faster-whisper transcribes the
+request, it is POSTed to `server.py`, and the reply is spoken with Piper. Replies
+are stripped of markdown and emoji before speaking. Fully local.
 
 ---
 
-## Current capabilities
+## Notes and limitations
 
-- Chat through a fully local model, offline.
-- Swap to any cloud model by changing one string (needs a key in `.env`).
-- Long-term memory that persists across restarts.
-- 1 local tool (`get_current_time`) plus 15 MCP tools: full file operations
-  (read, write, edit, search, move, directory trees) and web fetch.
+- **RAM.** On a 24 GB machine, running the worker, Whisper, Piper, the server, and a
+  browser at once is tight. Keeping the worker small (qwen3:8b) and pinned is the
+  balance that works; a larger worker forces a choice between speed and stability.
+- **Custom wake word.** A quickly-trained custom wake word can false-trigger; the
+  `THRESHOLD` dial trades false wakes against missed ones. A prebuilt openWakeWord
+  model (e.g. `hey_jarvis`) is more robust if the custom one is too sensitive.
+- **Local speed.** Each request is real local inference; expect seconds, not
+  instant. Pinning the worker removes reload lag.
 
 ---
 
-## Roadmap
+## Roadmap / ideas
 
-- **Phase 4 — Orchestration.** Replace the single model with a team: a small fast
-  model routes each request to a specialist (planner, coder, researcher). Also
-  where tool-heavy jobs get sent to a sharper model.
-- **Phase 5 — Interface.** A `sofia "..."` CLI command, and wiring the brain into
-  Open WebUI so it inherits the existing chat and voice setup.
-- **Phase 6 — Hardening.** Structured logging of every step and tool call, secret
-  and filesystem scoping, and pointing the backbone at a bigger machine when one
-  arrives.
-
-### Done
-
-- **Phase 0** — the LLM spine.
-- **Phase 1** — the agent loop with hand-written tools.
-- **Phase 3** — long-term memory via embeddings and Chroma.
-- **Phase 2** — real tools via MCP servers.
+- Tune or retrain the wake word for fewer false triggers.
+- Optional barge-in (interrupt Sofia while she speaks).
+- Run the server (and voice) as a `launchd` service for always-on use.
+- Multi-device access over Tailscale (requires adding auth to `server.py`).
+- Tool-call rate limit as an extra guardrail.
