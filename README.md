@@ -34,7 +34,7 @@ scaffolding around those two limits.
         |                       |                       |
         |                       v                       |  wake word (openWakeWord)
         |                 server.py  <------------------ |  -> record -> Whisper (STT)
-        |               (OpenAI API)   HTTP /v1          |  -> reply -> Piper (TTS)
+        |               (OpenAI API)   HTTP /v1          |  -> reply -> Kokoro (TTS)
         +-----------+-----------+------------------------+
                     v
               graph.py - router
@@ -160,7 +160,7 @@ ollama create sofia-router -f Modelfile.router
 ```
 
 The MCP servers download themselves on first use via `npx` and `uvx`. The voice
-loop needs a wake-word `.onnx` in the project root and a Piper voice; both are
+loop needs a wake-word `.onnx` in the project root and a Kokoro voice; both are
 fetched separately (see Voice below).
 
 ---
@@ -194,7 +194,7 @@ python voice.py           # terminal 2: the ears
 
 Say the wake word, wait for the acknowledgement, and talk. She records until you
 stop, transcribes locally, answers through the server, and speaks the reply with
-Piper. `THRESHOLD` in `voice.py` tunes wake sensitivity; `SILENCE_RMS` tunes when a
+Kokoro. `THRESHOLD` in `voice.py` tunes wake sensitivity; `SILENCE_RMS` tunes when a
 turn ends.
 
 ### Teaching it something (long-term memory)
@@ -252,7 +252,10 @@ to the coder. LangGraph walks the graph with a shared state.
 ### Voice (`voice.py`)
 A standalone loop: openWakeWord listens on the mic, faster-whisper transcribes the
 request, it is POSTed to `server.py`, and the reply is spoken with Kokoro. Replies
-are stripped of markdown and emoji before speaking. Fully local.
+are stripped of markdown and emoji before speaking. When you start a sentence with
+"remember", "call me", "my name is", or "note that", the loop saves it straight to
+long-term memory (no model decision), and each conversation preloads your saved
+facts so she addresses you correctly across sessions. Fully local.
 
 ---
 
