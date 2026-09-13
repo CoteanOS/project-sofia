@@ -1,4 +1,4 @@
-# cli.py — the `sofia "..."` entry point
+# cli.py - the `sofia "..."` entry point
 import sys
 from graph import graph
 

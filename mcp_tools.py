@@ -1,4 +1,4 @@
-# mcp_tools.py — persistent MCP sessions.
+# mcp_tools.py - persistent MCP sessions.
 # Servers are started ONCE on a background event loop and reused for every
 # tool call, instead of being relaunched per call. Public API is unchanged:
 # load_mcp() -> (schemas, routing);  call_mcp_tool(routing, name, args) -> str

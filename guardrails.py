@@ -1,4 +1,4 @@
-# guardrails.py — the single gate every tool call passes through
+# guardrails.py - the single gate every tool call passes through
 import json
 import time
 import pathlib

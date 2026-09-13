@@ -1,4 +1,4 @@
-# graph.py — Sofia orchestration
+# graph.py - Sofia orchestration
 
 from typing import TypedDict, NotRequired
 
@@ -47,6 +47,8 @@ CODER_SYSTEM = (
     "Never claim a file was changed unless you actually changed it. "
     "Be efficient with tools: do NOT read a file you have already read, "
     "do NOT list a directory twice, and do NOT call list_allowed_directories. "
+    "Be concise: answer in as few words as needed, in plain sentences. "
+    "No headers, bullet lists, emoji, or summaries unless asked. "
     "Once you have the information you need, stop calling tools and answer."
 )
 
@@ -117,6 +119,28 @@ def router(state: State) -> State:
     if not any(cue in text for cue in agentic_cues):
         print("  [router-fast] -> assistant")
         return {"route": "assistant"}
+
+    # Fast keyword routing: decide obvious cases in Python, skip the router model.
+    research_words = ("research", "search", "latest", "current", "look up", "online", "news")
+    code_words = ("code", "python", "javascript", "typescript", "debug", "bug",
+                  "fix ", "refactor", "implement", "file", "folder", "repo", "git", "script")
+    plan_words = ("plan", "roadmap", "architecture", "strategy", "decompose")
+
+    wants_research = any(w in text for w in research_words)
+    wants_code = any(w in text for w in code_words)
+
+    if wants_research and wants_code:
+        print("  [router-fast] -> research_coder")
+        return {"route": "research_coder"}
+    if wants_research:
+        print("  [router-fast] -> researcher")
+        return {"route": "researcher"}
+    if wants_code:
+        print("  [router-fast] -> coder")
+        return {"route": "coder"}
+    if any(w in text for w in plan_words):
+        print("  [router-fast] -> planner")
+        return {"route": "planner"}
 
     msg = llm(
         [

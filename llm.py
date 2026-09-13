@@ -1,4 +1,4 @@
-# llm.py — one interface to Sofia's model backends
+# llm.py - one interface to Sofia's model backends
 
 from dotenv import load_dotenv
 from litellm import completion, embedding

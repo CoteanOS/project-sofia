@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo "Warming gpt-oss:20b..."
+echo "Warming sofia-worker..."
 curl -s http://127.0.0.1:11434/api/generate \
   -d '{
-    "model": "gpt-oss:20b",
+    "model": "sofia-worker",
     "prompt": "hi",
     "stream": false,
     "keep_alive": "5m",
@@ -13,10 +13,10 @@ curl -s http://127.0.0.1:11434/api/generate \
     }
   }' > /dev/null
 
-echo "Warming qwen3:4b-instruct..."
+echo "Warming sofia-router..."
 curl -s http://127.0.0.1:11434/api/generate \
   -d '{
-    "model": "qwen3:4b-instruct",
+    "model": "sofia-router",
     "prompt": "Reply only with: assistant",
     "stream": false,
     "keep_alive": "5m",

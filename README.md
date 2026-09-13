@@ -74,7 +74,7 @@ Custom Ollama models, built from Modelfiles in the repo:
   `temperature 0`. Fast classification only.
 - **nomic-embed-text** - embeddings for long-term memory.
 - **faster-whisper** - speech-to-text for the voice loop.
-- **Piper `en_GB-jenny_dioco-medium`** - text-to-speech voice.
+- **Kokoro (`af_heart`)** - text-to-speech voice for the voice loop.
 
 Rebuild after editing a Modelfile: `ollama create sofia-worker -f Modelfile.worker`.
 
@@ -94,7 +94,7 @@ cloud model without touching the rest of the code.
   sessions).
 - **LangGraph** - models the specialist team as a graph.
 - **FastAPI / uvicorn** - the OpenAI-compatible server.
-- **openWakeWord** + **faster-whisper** + **Piper** - the local voice loop (wake
+- **openWakeWord** + **faster-whisper** + **Kokoro** - the local voice loop (wake
   word, speech-to-text, text-to-speech). Fully local, no accounts.
 - **uv** - Python environment. **Node** - runs the filesystem MCP server.
 
@@ -113,7 +113,7 @@ cloud model without touching the rest of the code.
 | `graph.py`      | Orchestration: the router and the six specialist routes.                  |
 | `cli.py`        | The `sofia "..."` entry point.                                            |
 | `server.py`     | OpenAI-compatible API (`/v1/chat/completions`, streaming) for Open WebUI. |
-| `voice.py`      | Wake-word voice loop: openWakeWord -> Whisper -> server.py -> Piper.       |
+| `voice.py`      | Wake-word voice loop: openWakeWord -> Whisper -> server.py -> Kokoro.      |
 | `warm_models.sh`| Pre-loads the worker and router models.                                   |
 | `start_sofia.sh`| Warms models, then launches the server on `127.0.0.1:8000`.               |
 | `Modelfile.*`   | Definitions for the custom `sofia-worker` and `sofia-router` models.      |
@@ -251,21 +251,32 @@ to the coder. LangGraph walks the graph with a shared state.
 
 ### Voice (`voice.py`)
 A standalone loop: openWakeWord listens on the mic, faster-whisper transcribes the
-request, it is POSTed to `server.py`, and the reply is spoken with Piper. Replies
+request, it is POSTed to `server.py`, and the reply is spoken with Kokoro. Replies
 are stripped of markdown and emoji before speaking. Fully local.
 
 ---
 
 ## Notes and limitations
 
-- **RAM.** On a 24 GB machine, running the worker, Whisper, Piper, the server, and a
-  browser at once is tight. Keeping the worker small (qwen3:8b) and pinned is the
-  balance that works; a larger worker forces a choice between speed and stability.
+- **Speed.** An agentic request that uses a tool takes roughly 20 to 25 seconds on
+  a 24 GB machine. This is the cost of the tool loop, not the model: the worker
+  makes two inference passes (decide to call a tool, then read the result and
+  answer), plus a tool round-trip. This was measured to be about the same on a
+  cloud model, slower on a larger local model (a 14B ran near 40 seconds), and
+  unchanged by shortening the answer. It is the floor for local agentic tool calls
+  on this hardware. The coder loop is capped at 4 steps so a confused model cannot
+  spiral into a much longer run.
+- **RAM.** On 24 GB, running the worker, Whisper, Kokoro, the server, and a browser
+  at once is tight. Keeping the worker small (qwen3:8b, ~6 GB) is the balance that
+  works; a larger worker forces a choice between speed and stability. `keep_alive`
+  in `llm.py` pins the model warm (fast, holds RAM) or releases it when idle (frees
+  RAM, reloads on next use).
 - **Custom wake word.** A quickly-trained custom wake word can false-trigger; the
   `THRESHOLD` dial trades false wakes against missed ones. A prebuilt openWakeWord
   model (e.g. `hey_jarvis`) is more robust if the custom one is too sensitive.
-- **Local speed.** Each request is real local inference; expect seconds, not
-  instant. Pinning the worker removes reload lag.
+- **Model is swappable.** The worker was tested on local and cloud (Gemini) by
+  changing one string; cloud works but the free tier rate-limits an agent quickly,
+  and a stronger model probes more aggressively, which the guardrails contained.
 
 ---
 

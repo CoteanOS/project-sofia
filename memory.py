@@ -1,4 +1,4 @@
-# memory.py — long-term memory via embeddings + Chroma
+# memory.py - long-term memory via embeddings + Chroma
 import pathlib
 import chromadb
 from llm import embed

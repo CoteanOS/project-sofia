@@ -1,4 +1,4 @@
-# agent.py — Sofia workers: fast chat + full tool agent
+# agent.py - Sofia workers: fast chat + full tool agent
 
 import json
 import uuid
@@ -95,7 +95,7 @@ def _build_messages(user_input, system, use_memory):
 
 
 # ---------------------------------------------------------------------------
-# FAST CHAT — no tool schemas, one model call
+# FAST CHAT - no tool schemas, one model call
 # ---------------------------------------------------------------------------
 
 def answer_text(
@@ -176,14 +176,14 @@ def _execute_tool(name, args):
 
 
 # ---------------------------------------------------------------------------
-# Full agent — tools + guardrails
+# Full agent - tools + guardrails
 # ---------------------------------------------------------------------------
 
 def run(
     user_input,
     model=None,
     system=None,
-    max_steps=10,
+    max_steps=4,
     use_memory=None,
 ):
     if use_memory is None:
@@ -239,7 +239,7 @@ def run_stream(
     user_input,
     model=None,
     system=None,
-    max_steps=10,
+    max_steps=4,
     use_memory=None,
 ):
     if use_memory is None:

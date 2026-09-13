@@ -1,6 +1,6 @@
 import re
 #!/usr/bin/env python3
-# voice.py — "Hey Sofia" hands-free loop (openWakeWord, fully local, no account).
+# voice.py - "Hey Sofia" hands-free loop (openWakeWord, fully local, no account).
 # wake -> record until silence -> faster-whisper -> server.py -> macOS `say`.
 import os, subprocess
 import numpy as np
@@ -10,6 +10,10 @@ import openwakeword
 from openwakeword.model import Model
 from faster_whisper import WhisperModel
 
+
+from kokoro import KPipeline
+import soundfile as _sf
+_kokoro = KPipeline(lang_code='a')   # British English, loaded once
 MODEL_PATH = os.path.expanduser("~/code/sofia/hey_sofia.onnx")
 KEYWORD    = "hey_sofia"          # = the .onnx filename stem
 THRESHOLD  = 0.8                  # raise toward 0.7 if it false-triggers
@@ -81,9 +85,14 @@ def clean_for_speech(t):
 
 def speak(text):
     text = clean_for_speech(text)
-    subprocess.run(["python", "-m", "piper", "-m", "en_GB-jenny_dioco-medium",
-                    "--length-scale", "1.1", "--noise-scale", "0.7", "--noise-w", "0.9",
-                    "--output-file", "/tmp/sofia.wav"], input=text.encode())
+    if not text:
+        return
+    audio = None
+    for _, _, a in _kokoro(text, voice="af_heart"):
+        audio = a
+    if audio is None:
+        return
+    _sf.write("/tmp/sofia.wav", audio, 24000)
     subprocess.run(["afplay", "/tmp/sofia.wav"])
 
 def conversation():

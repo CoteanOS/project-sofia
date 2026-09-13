@@ -1,4 +1,4 @@
-# tools.py — local hand-written tools (file ops now handled by the MCP fs server)
+# tools.py - local hand-written tools (file ops now handled by the MCP fs server)
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
