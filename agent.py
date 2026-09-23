@@ -114,12 +114,9 @@ def answer_text(
         use_memory,
     )
 
-    print("  [fast-chat] native Ollama / think=low")
+    print("  [fast-chat] native Ollama")
 
-    return ollama_fast_chat(
-        messages,
-        think="low",
-    )
+    return ollama_fast_chat(messages)
 
 
 def stream_text(
@@ -140,10 +137,7 @@ def stream_text(
 
     print("  [fast-chat] native Ollama streaming / think=low")
 
-    yield from ollama_fast_stream(
-        messages,
-        think="low",
-    )
+    yield from ollama_fast_stream(messages)
 
 
 # ---------------------------------------------------------------------------

@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 # voice.py - "Hey Sofia" hands-free loop.
-# wake (openWakeWord) -> record -> whisper -> server.py -> Kokoro TTS.
+# wake (openWakeWord) -> record -> whisper -> server.py -> Qwen3-TTS (MLX).
 # Fully local. Saves "remember/call me" statements to memory and preloads them.
-import os, re, subprocess
+import os, re, subprocess, time
 import numpy as np
 import requests
 import sounddevice as sd
 import openwakeword
 from openwakeword.model import Model
 from faster_whisper import WhisperModel
-from kokoro import KPipeline
+from mlx_audio.tts.utils import load_model
 import soundfile as sf
 from memory import ingest, retrieve
 
-MODEL_PATH = os.path.expanduser("~/code/sofia/hey_sofia.onnx")
+MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hey_sofia.onnx")
 KEYWORD    = "hey_sofia"
 THRESHOLD  = 0.85               # raise if it false-triggers, lower if it misses you
 SOFIA_URL  = "http://127.0.0.1:8000/v1/chat/completions"
@@ -29,14 +29,44 @@ print("Loading models...")
 openwakeword.utils.download_models()
 oww = Model(wakeword_models=[MODEL_PATH], inference_framework="onnx")
 stt = WhisperModel("base.en", device="cpu", compute_type="int8")
-kokoro = KPipeline(lang_code='a')   # 'a' = American English (voice af_heart)
+# Qwen3-TTS via MLX-Audio: Metal-accelerated on Apple Silicon, so it's fast AND expressive.
+TTS_MODEL = "mlx-community/Soprano-1.1-80M-bf16"   # tiny 80M, near-instant
+VOICE_STYLE = "a slow, somber British woman, low and measured, weary and subdued"
+TEMPERATURE = 0.2   # lower = flatter, more monotone/measured delivery
+SPEED       = 0.85  # <1 = slower playback
+tts = load_model(TTS_MODEL)
 stream = sd.InputStream(samplerate=RATE, channels=1, dtype="int16", blocksize=CHUNK)
+_muted = False
 
 _EMOJI = re.compile("[\U0001F000-\U0001FAFF\U00002600-\U000027BF"
                     "\U0001F1E6-\U0001F1FF\U00002190-\U000021FF"
                     "\U00002B00-\U00002BFF\uFE0F]+")
 
+import time as _time
+
+def _mic_stop():
+    try:
+        if stream.active:
+            stream.stop()
+    except Exception:
+        pass
+
+def _mic_start():
+    # CoreAudio can transiently refuse a stream (-9986). Retry a few times.
+    for _ in range(5):
+        try:
+            if not stream.active:
+                stream.start()
+            return
+        except Exception:
+            _time.sleep(0.2)
+    # last try, let it raise only if it still fails
+    if not stream.active:
+        stream.start()
+
 def read_chunk():
+    if _muted:
+        return np.zeros(CHUNK, dtype="int16")
     data, _ = stream.read(CHUNK)
     return data.flatten()
 
@@ -68,6 +98,12 @@ def ask_sofia(history):
     r.raise_for_status()
     return r.json()["choices"][0]["message"]["content"]
 
+def strip_think(t):
+    # kill qwen reasoning leaks: <think>..</think> blocks and bare /think //no_think switches
+    t = re.sub(r"<think>[\\s\\S]*?</think>", " ", t, flags=re.I)
+    t = re.sub(r"/no_think|/think", " ", t, flags=re.I)
+    return re.sub(r"\\s+", " ", t).strip()
+
 def clean_for_speech(t):
     t = _EMOJI.sub("", t)
     t = re.sub(r"```[\s\S]*?```", " ", t)
@@ -81,13 +117,30 @@ def speak(text):
     text = clean_for_speech(text)
     if not text:
         return
-    audio = None
-    for _, _, a in kokoro(text, voice="af_heart"):
-        audio = a
-    if audio is None:
-        return
-    sf.write("/tmp/sofia.wav", audio, 24000)
-    subprocess.run(["afplay", "/tmp/sofia.wav"])
+    global _muted
+    _muted = True                     # mute her whole busy window: generate + play
+    try:
+        gen_iter = tts.generate(text=text)
+        segments, sr = [], 24000
+        for result in gen_iter:
+            segments.append(np.asarray(result.audio, dtype=np.float32))
+            sr = int(getattr(result, "sample_rate", None) or getattr(result, "sr", sr))
+        if not segments:
+            return
+        audio = np.concatenate(segments).astype(np.float32)
+        sf.write("/tmp/sofia.wav", audio, sr, subtype="PCM_16")
+        subprocess.run(["afplay", "/tmp/sofia.wav"], check=False)
+        time.sleep(0.35)              # let the speaker/echo tail die
+    finally:
+        try:
+            for _ in range(50):
+                avail = stream.read_available
+                if not avail:
+                    break
+                stream.read(avail)
+        except Exception:
+            pass
+        _muted = False                # ALWAYS reset, even on early return/error
 
 def save_if_memory(text):
     low = text.lower().strip()
@@ -103,16 +156,21 @@ def conversation(history):
     if facts and not any(m.get("role") == "system" for m in history):
         history.insert(0, {"role": "system",
             "content": "Known facts about the user (honor these):\n" + "\n".join(facts)})
-    first = True
+    misses = 0
     while True:
         audio, heard = record_turn()
         if not heard:
-            return
+            # A pause is not a goodbye. Wait through a couple of quiet windows
+            # before giving up, so she does not drop you the moment you think.
+            misses += 1
+            if misses >= 3:
+                return
+            continue
+        misses = 0
         text = transcribe(audio)
         if not text:
-            if first:
-                speak("I didn't catch that.")
-                first = False
+            if misses < 3:
+                misses += 1
                 continue
             return
         print(f"  you: {text}")
@@ -122,7 +180,6 @@ def conversation(history):
         if saved:
             print(f"  [memory saved] {saved}")
             speak("Got it, I'll remember that.")
-            first = False
             continue
         history.append({"role": "user", "content": text})
         try:
@@ -132,11 +189,11 @@ def conversation(history):
             print(f"  error: {e}")
             history.pop()
             return
+        reply = strip_think(reply)
         history.append({"role": "assistant", "content": reply})
         del history[:-16]
         print(f"  sofia: {reply[:200]}")
         speak(reply)
-        first = False
 
 def main():
     stream.start()

@@ -4,8 +4,9 @@ import time
 import pathlib
 import fnmatch
 
-AUDIT = pathlib.Path("~/code/sofia/sofia.audit.jsonl").expanduser()
-ALLOWED_ROOT = pathlib.Path("~/code").expanduser().resolve()
+AUDIT = pathlib.Path(__file__).resolve().parent / "sofia.audit.jsonl"
+# Folder Sofia may read/write. Change to wherever your projects live.
+ALLOWED_ROOT = pathlib.Path("~/Documents/GIT").expanduser().resolve()
 
 MUTATING = {
     "write_file",

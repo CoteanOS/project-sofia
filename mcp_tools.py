@@ -13,7 +13,7 @@ SERVERS = {
     "fs": StdioServerParameters(
         command="npx",
         args=["-y", "@modelcontextprotocol/server-filesystem",
-              str(pathlib.Path("~/code").expanduser())],
+              str(pathlib.Path("~/Documents/GIT").expanduser())],
     ),
     "fetch": StdioServerParameters(
         command="uvx",

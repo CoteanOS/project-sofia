@@ -3,7 +3,7 @@ import pathlib
 import chromadb
 from llm import embed
 
-DB = str(pathlib.Path("~/code/sofia/memory_db").expanduser())
+DB = str(pathlib.Path(__file__).resolve().parent / "memory_db")
 client = chromadb.PersistentClient(path=DB)
 col = client.get_or_create_collection("sofia")
 
@@ -26,5 +26,8 @@ def retrieve(query, k=4):
     return docs[0]
 
 if __name__ == "__main__":
-    ingest("Sofia runs on an M-series MacBook.\n\nHer backbone model is gpt-oss:20b.", source="facts")
-    print(retrieve("what hardware does Sofia run on?"))
+    # Quick read-only check. Does NOT write anything.
+    # To store a fact:  python -c "from memory import ingest; ingest('...', source='facts')"
+    import sys
+    q = " ".join(sys.argv[1:]) or "what do you remember?"
+    print(retrieve(q))

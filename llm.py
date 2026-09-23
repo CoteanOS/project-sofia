@@ -63,14 +63,16 @@ OLLAMA_CHAT_URL = "http://127.0.0.1:11434/api/chat"
 FAST_CHAT_MODEL = "sofia-worker"
 
 
-def ollama_fast_chat(messages, think="low"):
-    payload = _json.dumps({
+def ollama_fast_chat(messages, think=None):
+    body = {
         "model": FAST_CHAT_MODEL,
         "messages": messages,
         "stream": False,
-        "think": think,
         "keep_alive": -1,
-    }).encode()
+    }
+    if think is not None:
+        body["think"] = think
+    payload = _json.dumps(body).encode()
 
     request = _urllib_request.Request(
         OLLAMA_CHAT_URL,
@@ -84,14 +86,16 @@ def ollama_fast_chat(messages, think="low"):
     return result.get("message", {}).get("content", "")
 
 
-def ollama_fast_stream(messages, think="low"):
-    payload = _json.dumps({
+def ollama_fast_stream(messages, think=None):
+    body = {
         "model": FAST_CHAT_MODEL,
         "messages": messages,
         "stream": True,
-        "think": think,
         "keep_alive": -1,
-    }).encode()
+    }
+    if think is not None:
+        body["think"] = think
+    payload = _json.dumps(body).encode()
 
     request = _urllib_request.Request(
         OLLAMA_CHAT_URL,

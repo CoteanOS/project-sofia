@@ -57,7 +57,7 @@ def build_task(messages):
     )
 
     history = messages[
-        max(0, current_index - 8):current_index
+        max(0, current_index - 20):current_index
     ]
 
     if not history:
@@ -88,9 +88,12 @@ def build_task(messages):
         return current
 
     return (
-        "Conversation context:\n"
+        "<history>\n"
         + "\n\n".join(context)
-        + "\n\nCURRENT USER REQUEST:\n"
+        + "\n</history>\n\n"
+        + "The text inside <history> is past conversation for reference only. "
+        + "Never quote or repeat it unless the request below explicitly asks. "
+        + "Respond only to this request:\n\n"
         + current
     )
 
