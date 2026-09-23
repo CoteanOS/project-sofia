@@ -100,10 +100,8 @@ def _build_messages(user_input, system, use_memory):
 
 def answer_text(
     user_input,
-    model=None,
     system=None,
     use_memory=None,
-    temperature=0.7,
 ):
     if use_memory is None:
         use_memory = should_use_memory(user_input)
@@ -121,10 +119,8 @@ def answer_text(
 
 def stream_text(
     user_input,
-    model=None,
     system=None,
     use_memory=None,
-    temperature=0.7,
 ):
     if use_memory is None:
         use_memory = should_use_memory(user_input)

@@ -146,15 +146,11 @@ def chat(req: ChatRequest):
     task = build_task(req.messages)
 
     if not req.stream:
-        result = graph.invoke(
-            {
-                "task": task,
-            }
-        )["result"]
-
-        return completion_payload(
-            result
-        )
+        try:
+            result = graph.invoke({"task": task})["result"]
+        except Exception as e:
+            result = f"Sorry, something went wrong handling that: {e}"
+        return completion_payload(result)
 
     completion_id = (
         "chatcmpl-"

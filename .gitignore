@@ -1,29 +1,30 @@
+# Python
+__pycache__/
+*.pyc
+.ruff_cache/
+
+# Environment
 .venv/
 .env
+
+# Runtime data (regenerated)
 memory_db/
-__pycache__/
 sofia.audit.jsonl
 
-*.bak
-.DS_Store
-haiku.txt
-path-test.txt
-fib.py
-
-*.bak
-.DS_Store
-haiku.txt
-path-test.txt
-fib.py
-
-*.bak
-*.bak~
-.DS_Store
+# Private assets - never commit these (your voice, your wake word)
 *.wav
 *.onnx
 *.onnx.json
+
+# Backups & OS cruft
+*.bak
+*.bak~
+.DS_Store
+
+# Coder-generated scratch files
 haiku.txt
 path-test.txt
 fib.py
 fizzbuzz.py
 rev.py
+FROM

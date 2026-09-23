@@ -1,0 +1,27 @@
+# Sofia dependencies. Recreate the env with:
+#   uv venv && source .venv/bin/activate && uv pip install -r requirements.txt
+#
+# To pin exact versions from a known-good env: uv pip freeze > requirements.lock
+
+# Core: model access, orchestration, memory, tools
+litellm
+langgraph
+chromadb
+python-dotenv
+mcp
+
+# Server
+fastapi
+uvicorn
+
+# Voice loop: wake word, STT, TTS, audio IO
+openwakeword
+faster-whisper
+mlx-audio
+sounddevice
+soundfile
+onnxruntime
+
+# Shared
+numpy
+requests
